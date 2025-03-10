@@ -1,0 +1,313 @@
+---
+title: "Hemp ITS Final Analysis"
+author: "JEB"
+date: "2024-01-09"
+output: html_document
+---
+
+## Load Libraries
+```{r}
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("dada2", version = "3.17")
+library(dada2)
+
+#install.packages("tidyverse")
+library(tidyverse)
+
+#BiocManager::install("phyloseq")
+library(phyloseq)  
+
+#install.packages("ggforce")
+library(ggforce)
+
+#install.packages("htmltools")
+library(htmltools)
+
+#install.packages("vegan")
+library(vegan)
+
+#install.packages("dplyr")
+library(dplyr)
+
+#install.packages("viridis") 
+library(viridis)
+
+library(tibble)
+#BiocManager::install("DECIPHER")
+library(DECIPHER)
+#BiocManager::install("Biostrings")
+library(Biostrings)
+```
+
+# DADA2 Analysis
+Assumes input fastq files have already been processed with cutadapt to remove primer sequences.
+For ITS: Forward primer (R1) = 19 bps, Reverse primer (R2) = 19 bps
+
+## Quality Analysis
+```{r}
+# Set the filepath to working directory
+path <- getwd()
+print(path)
+
+# Sort forward file names
+fnFs <- sort(list.files(path, pattern="_R1.fastq.gz", full.names = TRUE))
+length(fnFs) # Display the number of forward file names
+
+# Sort reverse file names
+fnRs <- sort(list.files(path, pattern="_R2.fastq.gz", full.names = TRUE))
+length(fnRs)
+
+# This will return a single sample name for each pair of Forward and Reverse reads
+sample.names <- sapply(strsplit(basename(fnFs), "_R"), `[`,1)
+head(sample.names) # Show the first few sample names
+length(sample.names) # Display the number of sample names
+
+# Visualize quality profiles of forward & reverse reads
+pdf(file = "QualF.pdf",
+    width = 10,
+    height = 10)
+plotQualityProfile(fnFs[1:18]) # Plot quality profiles for 18 datasets
+dev.off()
+
+pdf(file = "QualR.pdf",
+    width = 10,
+    height = 10)
+plotQualityProfile(fnRs[1:18])
+dev.off()
+```
+
+## Filter and Trim
+ITS reads have some lower quality at ends so trim to 200. Use minLen to remove abundant short sequences (unknown contamination?).
+```{r}
+# Place filtered files in a "filtered" subdirectory
+filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+
+# Assign sample names to the filtered forward and reverse read file paths
+names(filtFs) <- sample.names
+names(filtRs) <- sample.names
+
+# Filter and trim the reads, then place them in a new directory called "filtered"
+out <- filterAndTrim(fnFs, #file path to the directory containing the forward fastq files
+                     filtFs, #the path to the directory that will contain output filtered forward files
+                     fnRs,  #file path to the directory containing the reverse fastq files
+                     filtRs, #the path to the directory that will contain output filtered reverse files
+                     minLen=c(50,50), #minimum read length, default is 20
+                     truncLen=c(200,200), #truncate reads after truncLen bases, default is 0 (no truncation) 
+                     maxN=0, #DADA2 requires no Ns
+                     maxEE=c(2,2), #sets maximum number of "expected errors" for (F,R) reads, 2 is recommended
+                     truncQ=2, #truncate reads at the first instance of a quality score less than or equal to truncQ, default is 2
+                     rm.phix=TRUE, #discard reads that match against the phiX genome
+                     compress=TRUE, #output files are gzipped
+                     multithread=TRUE)
+# Check how many reads were filtered out
+out
+```
+
+## Learn Error Rates
+```{r}
+# Estimate error rates from the filtered forward and reverse reads.
+errF <- learnErrors(filtFs, multithread=TRUE)  
+errR <- learnErrors(filtRs, multithread = TRUE)
+
+# Visualize error plots, gray dots (estimates) vs red line (model). 
+pdf(file = "errF.pdf",
+    width = 10,
+    height = 10)
+plotErrors(errF, nominalQ=TRUE) #plot on a nominal scale instead of default logarithmic scale
+dev.off()
+
+pdf(file = "errR.pdf",
+    width = 10,
+    height = 10)
+plotErrors(errR, nominalQ=TRUE)
+dev.off()
+```
+
+## Sample Inference and Merge Paired Reads
+```{r}
+# Sample inference with pooling to increase sensitivity, pseudo-pooling given size of datasets
+dadaFs <- dada(filtFs, err=errF, pool="pseudo", multithread = TRUE)
+dadaRs <- dada(filtRs, err=errR, pool="pseudo", multithread = TRUE) 
+
+# Merge paired reads to generate single consensus sequences for each pair 
+mergers <- mergePairs(dadaFs, #the denoised forward reads
+                      filtFs, #the filtered forward reads
+                      dadaRs, #the denoised reverse reads
+                      filtRs, #the filtered reverse reads
+                      verbose=TRUE) #a summary of the function results are printed to standard output.
+
+#Construct sequence table and visualize length distribution
+seqtab <- makeSequenceTable(mergers)
+dim(seqtab)
+table(nchar(getSequences(seqtab)))
+```
+
+## Remove non-target length sequences
+For ITS: the target length is 200-325
+```{r}
+seqtab2 <- seqtab[,nchar(colnames(seqtab)) %in% 200:325]
+dim(seqtab2)
+table(nchar(getSequences(seqtab2)))
+```
+
+## Remove Chimeras and Track Read Statistics
+```{r}
+# Remove chimeras using pooled method to mirror pooled sample inference 
+seqtab.nochim <- removeBimeraDenovo(seqtab2, #the merged sequences of target length
+                                    method="pooled",
+                                    minFoldParentOverAbundance=8,
+                                    multithread=TRUE, 
+                                    verbose=TRUE)
+dim(seqtab.nochim)
+sum(seqtab.nochim)/sum(seqtab2) #percent of merged reads that remain after chimera removal
+
+# Track read statistics
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab2), rowSums(seqtab.nochim))
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "targetLength", "nonchim")
+rownames(track) <- sample.names
+track
+write.table(track, "ITS_ReadStats.tsv", sep="\t", quote=F, col.names=NA)
+
+# Write ASV fasta and counts files for phyloseq analysis
+asv_seqs <- colnames(seqtab.nochim)
+asv_headers <- vector(dim(seqtab.nochim)[2], mode="character")
+
+for (i in 1:dim(seqtab.nochim)[2]) {
+    asv_headers[i] <- paste(">ASV", i, sep="_")
+}
+
+asv_fasta <- c(rbind(asv_headers, asv_seqs))
+write(asv_fasta, "ITS_ASVs.fasta")
+
+asv_tab <- t(seqtab.nochim)
+row.names(asv_tab) <- sub(">", "", asv_headers)
+write.table(asv_tab, "ITS_ASVs_counts.tsv", sep="\t", quote=F, col.names=NA)
+```
+
+## Clustering ASVs into OTUs (99%)
+Code from: https://github.com/benjjneb/dada2/issues/947
+```{r}
+# Find clusters of ASVs to form the new OTUs
+dna <- Biostrings::DNAStringSet(asv_seqs)
+aln <- DECIPHER::AlignSeqs(dna)
+d <- DECIPHER::DistanceMatrix(aln)
+clusters <- DECIPHER::TreeLine(
+  myDistMatrix=d, 
+  method = "complete", #other option is "single"
+  cutoff = 0.01, # 99% OTU
+  type = "clusters"
+  )
+
+# Merge columns of seqtab matrix for ASVs in the same OTU, prep by adding sequences to the `clusters` data frame
+columndf <- data.frame(asv_seqs)
+clusters <- clusters %>% add_column(columndf)
+
+merged_seqtab <- seqtab.nochim %>% 
+  t %>%
+  rowsum(clusters$cluster) %>%
+  t
+# Renaming of clusters to OTU<cluster #>
+colnames(merged_seqtab) <- paste0("OTU", colnames(merged_seqtab))
+
+# Make a new dataframe to keep track of which ASVs are in which cluster
+newdf <- clusters
+newdf <- tibble::rownames_to_column(newdf, "ASV")
+colnames(newdf)<-c("ASV","C.ASV","sequence") 
+
+# Arrange by C.ASV and keep only the first ASV in the cluster
+newdf.sort<-newdf %>% arrange(C.ASV) %>% distinct(C.ASV,.keep_all = TRUE)
+
+# Write OTU fasta and counts files for phyloseq analysis
+fas<-paste(">OTU",seq(1:nrow(newdf.sort)),"\n",newdf.sort$sequence,sep="")
+write.table(fas,file="ITS_OTUs.fasta", row.names=FALSE, col.names=FALSE,quote = FALSE)
+
+otu_tab <- t(merged_seqtab)
+write.table(otu_tab, "ITS_OTUs_counts.tsv", sep="\t", quote=F, col.names=NA)
+
+```
+
+## Assign Taxonomy to ASVs and OTUs for Comparison
+```{r}
+# ASV analysis
+ASVtaxa <- assignTaxonomy(seqtab.nochim, #the merged sequences with chimeras removed
+                       "UNITEhead_Oomycota.fasta", #reference sequences
+                       minBoot=80,
+                       multithread=TRUE,
+                       tryRC=FALSE)
+
+# Create ASV taxonomy table for phyloseq analysis
+asv_tax <- ASVtaxa
+rownames(asv_tax) <- gsub(pattern=">", replacement="", x=asv_headers)
+write.table(asv_tax, "ITS_ASVs_taxa.tsv", sep = "\t", quote=F, col.names=NA)
+
+# Merge ASV tables for manual analysis
+Counts <- read_tsv("ITS_ASVs_counts.tsv", show_col_types = FALSE)
+colnames(Counts)[1]=c('ASV')
+Taxa <- read_tsv("ITS_ASVs_taxa.tsv", show_col_types = FALSE)
+colnames(Taxa)[1]=c('ASV')
+Merged <- inner_join(Counts, Taxa, by="ASV")
+write_tsv(Merged, "ITS_DADA2_ASVsmerged.tsv")
+
+# OTU analysis
+OTUseqs <- newdf.sort$sequence
+OTUtaxa <- assignTaxonomy(OTUseqs, #the merged sequences with chimeras removed
+                       "UNITEhead_Oomycota.fasta", #reference sequences
+                       minBoot=80,
+                       multithread=TRUE,
+                       tryRC=FALSE)
+
+# Create OTU taxonomy table for phyloseq analysis
+otu_tax <- OTUtaxa
+rownames(otu_tax) <- paste("OTU", newdf.sort$C.ASV, sep="")
+write.table(otu_tax, "ITS_OTUs_taxa.tsv", sep = "\t", quote=F, col.names=NA)
+
+# Merge OTU tables for manual analysis
+Counts2 <- read_tsv("ITS_OTUs_counts.tsv", show_col_types = FALSE)
+colnames(Counts2)[1]=c('OTU')
+Taxa2 <- read_tsv("ITS_OTUs_taxa.tsv", show_col_types = FALSE)
+colnames(Taxa2)[1]=c('OTU')
+Merged2 <- inner_join(Counts2, Taxa2, by="OTU")
+write_tsv(Merged2, "ITS_DADA2_OTUsmerged.tsv")
+
+```
+
+## Assign Species with Modified Reference Format
+```{r}
+ASVspecies <- assignSpecies(seqtab.nochim,
+                       "UNITEhead_OomSpecies.fasta",
+                       allowMultiple = TRUE,
+                       tryRC=FALSE)
+# Create ASV taxonomy table for species analysis
+asv_sp <- ASVspecies
+rownames(asv_sp) <- gsub(pattern=">", replacement="", x=asv_headers)
+write.table(asv_sp, "ITS_ASVs_species.tsv", sep = "\t", quote=F, col.names=NA)
+
+# Merge ASV tables for manual analysis
+SpeciesList <- read_tsv("ITS_ASVs_species.tsv", show_col_types = FALSE)
+colnames(SpeciesList)[1]=c('ASV')
+SpMerged <- inner_join(Merged, SpeciesList, by="ASV")
+write_tsv(SpMerged, "ITS_DADA2_ASVsSpeciesmerged.tsv")
+
+OTUspecies <- assignSpecies(OTUseqs,
+                       "UNITEhead_OomSpecies.fasta",
+                       allowMultiple = TRUE,
+                       tryRC=FALSE)
+# Create OTU taxonomy table for species analysis
+otu_sp <- OTUspecies
+rownames(otu_sp) <- paste("OTU", newdf.sort$C.ASV, sep="")
+write.table(otu_sp, "ITS_OTUs_species.tsv", sep = "\t", quote=F, col.names=NA)
+
+# Merge OTU tables for manual analysis
+OTUSpeciesList <- read_tsv("ITS_OTUs_species.tsv", show_col_types = FALSE)
+colnames(OTUSpeciesList)[1]=c('OTU')
+SpMerged2 <- inner_join(Merged2, OTUSpeciesList, by="OTU")
+write_tsv(SpMerged2, "ITS_DADA2_OTUsSpeciesmerged.tsv")
+
+
+```
+
+
+
