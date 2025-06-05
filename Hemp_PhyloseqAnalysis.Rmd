@@ -1,0 +1,495 @@
+---
+title: "Hemp Phyloseq Analysis for Manuscript"
+author: "Jaime Blair"
+date: "2025-06-05"
+output: html_document
+---
+
+##Load Libraries
+```{r}
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("dada2", version = "3.17")
+library(dada2)
+
+#install.packages("tidyverse")
+library(tidyverse)
+
+#BiocManager::install("phyloseq")
+library(phyloseq)  
+
+#install.packages("ggforce")
+library(ggforce)
+
+#install.packages("htmltools")
+library(htmltools)
+
+#install.packages("vegan")
+library(vegan)
+
+#install.packages("dplyr")
+library(dplyr)
+
+#install.packages("viridis") 
+library(viridis)
+
+library(tibble)
+
+#BiocManager::install("DECIPHER")
+#library(DECIPHER)
+#BiocManager::install("Biostrings")
+#library(Biostrings)
+
+
+```
+
+## Load DADA2 files to create Phyloseq Objects
+For rps10: some eDNA samples failed to amplify. Empty columns were added to RevisedOTU_counts so all samples and locations could be graphed together.
+```{r}
+# Read counts and taxa tables into new variables for each locus
+COIcount_df <- read.table("COI_RevisedOTU_counts.tsv", header=T, row.names=1, check.names=F, sep="\t")
+COItaxa_df <- as.matrix(read.csv("COI_RevisedOTU_taxa.tsv", header=T, row.names=1, check.names=F, sep="\t"))
+
+RPScount_df <- read.table("rps10_RevisedOTU_counts.tsv", header=T, row.names=1, check.names=F, sep="\t")
+RPStaxa_df <- as.matrix(read.csv("rps10_RevisedOTU_taxa.tsv", header=T, row.names=1, check.names=F, sep="\t"))
+
+ITScount_df <- read.table("ITS_RevisedOTU_counts.tsv", header=T, row.names=1, check.names=F, sep="\t")
+ITStaxa_df <- as.matrix(read.csv("ITS_RevisedOTU_taxa.tsv", header=T, row.names=1, check.names=F, sep="\t"))
+
+# Read in metadata file
+COImetadata <- read.csv("COI_metadata.csv")
+RPSmetadata <- read.csv("rps10_metadata.csv")
+ITSmetadata <- read.csv("ITS_metadata.csv")
+
+# Make the sample names the row names for sample information
+COImetadata <- COImetadata %>% remove_rownames %>% column_to_rownames(var="SampleName")
+COImetadata <- as.data.frame(COImetadata)
+RPSmetadata <- RPSmetadata %>% remove_rownames %>% column_to_rownames(var="SampleName")
+RPSmetadata <- as.data.frame(RPSmetadata)
+ITSmetadata <- ITSmetadata %>% remove_rownames %>% column_to_rownames(var="SampleName")
+ITSmetadata <- as.data.frame(ITSmetadata)
+
+# Transform data into phyloseq object
+COIsample_info_tab_phy <- sample_data(COImetadata)
+COIcount_tab_phy <- otu_table(COIcount_df, taxa_are_rows=T) 
+COItax_tab_phy <- tax_table(COItaxa_df)
+
+COIPhyloseq_object <- phyloseq(COIcount_tab_phy,
+                            COItax_tab_phy,
+                            COIsample_info_tab_phy)
+COIPhyloseq_object #Print phyloseq summary
+
+RPSsample_info_tab_phy <- sample_data(RPSmetadata)
+RPScount_tab_phy <- otu_table(RPScount_df, taxa_are_rows=T) 
+RPStax_tab_phy <- tax_table(RPStaxa_df)
+
+RPSPhyloseq_object <- phyloseq(RPScount_tab_phy,
+                            RPStax_tab_phy,
+                            RPSsample_info_tab_phy)
+RPSPhyloseq_object #Print phyloseq summary
+
+ITSsample_info_tab_phy <- sample_data(ITSmetadata)
+ITScount_tab_phy <- otu_table(ITScount_df, taxa_are_rows=T) 
+ITStax_tab_phy <- tax_table(ITStaxa_df)
+
+ITSPhyloseq_object <- phyloseq(ITScount_tab_phy,
+                            ITStax_tab_phy,
+                            ITSsample_info_tab_phy)
+ITSPhyloseq_object #Print phyloseq summary
+
+```
+
+## Alpha Diversity (complete dataset)
+```{r}
+# Observed species richness across all datasets
+COI_Obs <- plot_richness(COIPhyloseq_object, x="SampleID", color = "HempType", measures=c("Observed"))+ 
+  geom_boxplot()+
+  scale_colour_viridis_d()+
+  theme_bw()+
+  ylab("Species Richness")+
+  theme(axis.text.x = element_text(angle = 45, hjust=1))+
+  ggtitle("COI")
+COI_Obs
+
+RPS_Obs <- plot_richness(RPSPhyloseq_object, x="SampleID", color = "HempType", measures=c("Observed"))+ 
+  geom_boxplot()+
+  scale_colour_viridis_d()+
+  theme_bw()+
+  ylab("Species Richness")+
+  theme(axis.text.x = element_text(angle = 45, hjust=1))+
+  ggtitle("rps10")
+RPS_Obs
+
+ITS_Obs <- plot_richness(ITSPhyloseq_object, x="SampleID", color = "HempType", measures=c("Observed"))+ 
+  geom_boxplot()+
+  scale_colour_viridis_d()+
+  theme_bw()+
+  ylab("Species Richness")+
+  theme(axis.text.x = element_text(angle = 45, hjust=1))+
+  ggtitle("ITS")
+ITS_Obs
+
+```
+
+
+## Alpha Diversity Analysis of eDNA Samples (no Mock Communities)
+```{r}
+# Remove mocks from dataset
+COIeDNA_Phyloseq <- subset_samples(COIPhyloseq_object, HempType != "Mock")
+#COIeDNA_Phyloseq
+
+RPSeDNA_Phyloseq <- subset_samples(RPSPhyloseq_object, HempType != "Mock")
+#RPSeDNA_Phyloseq
+
+ITSeDNA_Phyloseq <- subset_samples(ITSPhyloseq_object, HempType != "Mock")
+#ITSeDNA_Phyloseq
+
+COIeDNA_Alpha <- plot_richness(COIeDNA_Phyloseq, x="Location", color = "HempType", measures=c("ACE","Shannon"))+ 
+  geom_boxplot()+
+  scale_colour_manual(values = c("orange", "darkgreen"))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust=1))+
+  ggtitle("COI")
+COIeDNA_Alpha
+
+RPSeDNA_Alpha <- plot_richness(RPSeDNA_Phyloseq, x="Location", color = "HempType", measures=c("ACE","Shannon"))+ 
+  geom_boxplot()+
+  scale_colour_manual(values = c("orange", "darkgreen"))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust=1))+
+  ggtitle("rps10")
+RPSeDNA_Alpha
+
+ITSeDNA_Alpha <- plot_richness(ITSeDNA_Phyloseq, x="Location", color = "HempType", measures=c("ACE","Shannon"))+ 
+  geom_boxplot()+
+  scale_colour_manual(values = c("orange", "darkgreen"))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust=1))+
+  ggtitle("ITS")
+ITSeDNA_Alpha
+
+```
+
+## Alpha Diversity Kruskal-Wallace Tests on eDNA Samples (no Mock Communities)
+Conversion function from: https://jacobrprice.github.io/2017/08/26/phyloseq-to-vegan-and-back.html
+```{r}
+# convert the sample_data() metadata within a phyloseq object to a vegan compatible data object
+pssd2veg <- function(physeq) {
+  sd <- sample_data(physeq)
+  return(as(sd,"data.frame"))
+}
+
+# convert the otu_table() within a phyloseq object to a vegan compatible data object
+# don't need this because PhyloSeq has estimate_richness with Phyloseq object
+psotu2veg <- function(physeq) {
+  OTU <- otu_table(physeq)
+  if (taxa_are_rows(OTU)) {
+    OTU <- t(OTU)
+  }
+  return(as(OTU, "matrix"))
+}
+
+COIeDNASampleFile <- pssd2veg(COIeDNA_Phyloseq)
+COIeDNA_AlphaEst <- estimate_richness(COIeDNA_Phyloseq, measures = c("ACE","Shannon"))
+#COIeDNA_AlphaEst
+COIstats <- cbind(COIeDNASampleFile, COIeDNA_AlphaEst)
+#COIstats
+sink(file = "COI_KruskalOutputs.txt")
+COIresult1 <- kruskal.test(Shannon ~ Location, data = COIstats)
+COIresult1
+COIresult2 <- kruskal.test(Shannon ~ HempType, data = COIstats)
+COIresult2
+COIresult3 <- kruskal.test(ACE ~ Location, data = COIstats)
+COIresult3
+COIresult4 <- kruskal.test(ACE ~ HempType, data = COIstats)
+COIresult4
+sink(file=NULL)
+
+ITSeDNASampleFile <- pssd2veg(ITSeDNA_Phyloseq)
+ITSeDNA_AlphaEst <- estimate_richness(ITSeDNA_Phyloseq, measures = c("ACE","Shannon"))
+#ITSeDNA_AlphaEst
+ITSstats <- cbind(ITSeDNASampleFile, ITSeDNA_AlphaEst)
+#ITSstats
+sink(file = "ITS_KruskalOutputs.txt")
+ITSresult1 <- kruskal.test(Shannon ~ Location, data = ITSstats)
+ITSresult1
+ITSresult2 <- kruskal.test(Shannon ~ HempType, data = ITSstats)
+ITSresult2
+ITSresult3 <- kruskal.test(ACE ~ Location, data = ITSstats)
+ITSresult3
+ITSresult4 <- kruskal.test(ACE ~ HempType, data = ITSstats)
+ITSresult4
+sink(file=NULL)
+
+FullRPS <- estimate_richness(RPSeDNA_Phyloseq, measures = "ACE")
+FullRPSSampleFile <- pssd2veg(RPSeDNA_Phyloseq)
+FullRPSstats <- cbind(FullRPSSampleFile, FullRPS)
+sink(file = "RPS_KruskalOutputs.txt")
+FullRPSresult3 <- kruskal.test(ACE ~ Location, data = FullRPSstats)
+FullRPSresult3
+FullRPSresult4 <- kruskal.test(ACE ~ HempType, data = FullRPSstats)
+FullRPSresult4
+
+RPSnoMiss <- subset_samples(RPSeDNA_Phyloseq, Location != "LocationC")
+RPSnoMiss <- subset_samples(RPSnoMiss, Location != "LocationE")
+RPSnoMiss <- subset_samples(RPSnoMiss, SampleID != "D")
+RPSeDNASampleFile <- pssd2veg(RPSnoMiss)
+RPSeDNA_AlphaEst <- estimate_richness(RPSnoMiss, measures = "Shannon")
+#RPSeDNA_AlphaEst
+RPSstats <- cbind(RPSeDNASampleFile, RPSeDNA_AlphaEst)
+#RPSstats
+RPSresult1 <- kruskal.test(Shannon ~ Location, data = RPSstats)
+RPSresult1
+RPSresult2 <- kruskal.test(Shannon ~ HempType, data = RPSstats)
+RPSresult2
+sink(file=NULL)
+
+
+```
+
+
+## Beta Diversity (complete dataset)
+```{r}
+# Transform to even sampling depth (convert counts to percentages)
+COI_transformed = transform_sample_counts(COIPhyloseq_object, function(x) x/sum(x)*100) 
+
+# Bray-Curtis dissimilarity index
+COIdistance_bray = phyloseq::distance(COI_transformed, method = "bray")
+COIordinate_PCoA_bray = ordinate(COI_transformed, method = "PCoA", distance = "COIdistance_bray")
+COIPCoA_plot_bray <- plot_ordination(COI_transformed, COIordinate_PCoA_bray, color = "HempType", label = "SampleID")+
+  theme_bw()+
+  stat_ellipse()+ #uses a 95% confidence interval
+  ggtitle("COI Bray-Curtis PCoA")
+COIPCoA_plot_bray
+
+# Jaccard dissimilarity index
+COIdistance_jacc = phyloseq::distance(COI_transformed, method = "jaccard", binary=TRUE)
+COIordinate_PCoA_jacc = ordinate(COI_transformed, method = "PCoA", distance = "COIdistance_jacc")
+COIPCoA_plot_jacc <- plot_ordination(COI_transformed, COIordinate_PCoA_jacc, color = "HempType", label = "SampleID")+
+  theme_bw()+
+  stat_ellipse()+ #uses a 95% confidence interval
+  ggtitle("COI Jaccard PCoA")
+COIPCoA_plot_jacc
+```
+
+## Beta Diversity Analysis of eDNA Samples (no Mock Communities)
+```{r}
+# Remove mocks from dataset
+#COIeDNA_Phyloseq <- subset_samples(COIPhyloseq_object, HempType != "Mock")
+#COIeDNA_Phyloseq
+#RPSeDNA_Phyloseq <- subset_samples(RPSPhyloseq_object, HempType != "Mock")
+#RPSeDNA_Phyloseq
+#ITSeDNA_Phyloseq <- subset_samples(ITSPhyloseq_object, HempType != "Mock")
+#ITSeDNA_Phyloseq
+
+# Transform to even sampling depth (convert counts to percentages)
+COIeDNA_transformed = transform_sample_counts(COIeDNA_Phyloseq, function(x) x/sum(x)*100)
+RPSeDNA_transformed = transform_sample_counts(RPSnoMiss, function(x) x/sum(x)*100)
+ITSeDNA_transformed = transform_sample_counts(ITSeDNA_Phyloseq, function(x) x/sum(x)*100)
+
+# Jaccard dissimilarity index
+COIeDNA_jacc = phyloseq::distance(COIeDNA_transformed, method = "jaccard", binary=TRUE)
+COIeDNAordinate_jacc = ordinate(COIeDNA_transformed, method = "PCoA", distance = "COIeDNA_jacc")
+COIeDNAPCoA_jacc <- plot_ordination(COIeDNA_transformed, COIeDNAordinate_jacc, color = "HempType")+
+  theme_bw()+
+  scale_colour_manual(values = c("orange", "darkgreen"))+
+  geom_text(mapping = aes(label = SampleID), size = 3, vjust = 1, nudge_y = -0.02)+
+  geom_point(size=2)+
+  stat_ellipse()+ #uses a 95% confidence interval
+  ggtitle("COI Jaccard")
+COIeDNAPCoA_jacc
+
+RPSeDNA_jacc = phyloseq::distance(RPSeDNA_transformed, method = "jaccard", binary=TRUE)
+RPSeDNAordinate_jacc = ordinate(RPSeDNA_transformed, method = "PCoA", distance = "RPSeDNA_jacc")
+RPSeDNAPCoA_jacc <- plot_ordination(RPSeDNA_transformed, RPSeDNAordinate_jacc, color = "HempType")+
+  theme_bw()+
+  scale_colour_manual(values = c("orange", "darkgreen"))+
+  geom_text(mapping = aes(label = SampleID), size = 3, vjust = 1, nudge_y = -0.02)+
+  geom_point(size=2)+
+  stat_ellipse()+ #uses a 95% confidence interval
+  ggtitle("rps10 Jaccard")
+RPSeDNAPCoA_jacc
+
+ITSeDNA_jacc = phyloseq::distance(ITSeDNA_transformed, method = "jaccard", binary=TRUE)
+ITSeDNAordinate_jacc = ordinate(ITSeDNA_transformed, method = "PCoA", distance = "ITSeDNA_jacc")
+ITSeDNAPCoA_jacc <- plot_ordination(ITSeDNA_transformed, ITSeDNAordinate_jacc, color = "HempType")+
+  theme_bw()+
+  scale_colour_manual(values = c("orange", "darkgreen"))+
+  geom_text(mapping = aes(label = SampleID), size = 3, vjust = 1, nudge_y = -0.02)+
+  geom_point(size=2)+
+  stat_ellipse()+ #uses a 95% confidence interval
+  ggtitle("ITS Jaccard")
+ITSeDNAPCoA_jacc
+
+```
+
+## PERMANOVA
+From: https://github.com/joey711/phyloseq/issues/689
+```{r}
+#library(vegan)
+sink(file = "PermanoveOut.txt")
+COImetadata <- as(sample_data(COIeDNA_transformed), "data.frame")
+adonis2(distance(COIeDNA_transformed, method="jaccard") ~ HempType, data = COImetadata)
+adonis2(distance(COIeDNA_transformed, method="jaccard") ~ Location, data = COImetadata)
+
+ITSmetadata <- as(sample_data(ITSeDNA_transformed), "data.frame")
+adonis2(distance(ITSeDNA_transformed, method="jaccard") ~ HempType, data = ITSmetadata)
+adonis2(distance(ITSeDNA_transformed, method="jaccard") ~ Location, data = ITSmetadata)
+
+RPSmetadata <- as(sample_data(RPSeDNA_transformed), "data.frame")
+adonis2(distance(RPSeDNA_transformed, method="jaccard") ~ HempType, data = RPSmetadata)
+adonis2(distance(RPSeDNA_transformed, method="jaccard") ~ Location, data = RPSmetadata)
+sink(file=NULL)
+
+
+```
+
+## Relative Abundance Plots for eDNA Samples (no Mock Communities)
+```{r}
+# Remove mocks from dataset
+#COIeDNA_Phyloseq <- subset_samples(COIPhyloseq_object, HempType != "Mock")
+#COIeDNA_Phyloseq
+#RPSeDNA_Phyloseq <- subset_samples(RPSPhyloseq_object, HempType != "Mock")
+#RPSeDNA_Phyloseq
+#ITSeDNA_Phyloseq <- subset_samples(ITSPhyloseq_object, HempType != "Mock")
+#ITSeDNA_Phyloseq
+
+# Merge OTUs of the same species
+COI.glom = tax_glom(COIeDNA_Phyloseq, taxrank = "Species")
+# Merge by location
+COIlocations.glom = merge_samples(COI.glom, "Location", fun=sum) 
+COIlocations.glom.df = psmelt(COIlocations.glom)
+write_excel_csv(COIlocations.glom.df, "COImergedSpeciesLocations.xls")
+  
+RPS.glom = tax_glom(RPSnoMiss, taxrank = "Species")
+RPSlocations.glom = merge_samples(RPS.glom, "Location", fun=sum) 
+RPSlocations.glom.df = psmelt(RPSlocations.glom)
+write_excel_csv(RPSlocations.glom.df, "RPSmergedSpeciesLocations.xls")
+
+ITS.glom = tax_glom(ITSeDNA_Phyloseq, taxrank = "Species")
+ITSlocations.glom = merge_samples(ITS.glom, "Location", fun=sum) 
+ITSlocations.glom.df = psmelt(ITSlocations.glom)
+write_excel_csv(ITSlocations.glom.df, "ITSmergedSpeciesLocations.xls")
+
+# Create list of top 10 OTUs in COI
+top10 <- names(sort(taxa_sums(COI.glom), decreasing = TRUE)[1:10])
+top10
+# Prune out all taxa except those top 10
+prune.top10 = prune_taxa(top10, COI.glom)
+ntaxa(prune.top10) #this should return 10
+# Normalize the top 10 taxa to be out of 100
+COI.trans = transform_sample_counts(prune.top10, function(x) x/sum(x)*100)
+# Create a dataframe that has melted the normalized relative abundances of the top 10 taxa
+COI.dataframe = psmelt(COI.trans)
+
+COItop10 <- ggplot(COI.dataframe, aes(x=SampleID, y=Abundance, fill=Species))+
+  theme_classic()+
+  geom_bar(stat="identity")+
+  scale_fill_hue(l=55)+
+  xlab("SampleID")+
+  ylab("Relative Abundance %")+
+  labs(fill = "Top 10 Species")+
+  ggtitle("Relative Abundance of Oomycete Species: COI barcode")+
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) #+
+  #facet_wrap(~Location)
+COItop10
+
+# Create list of top 10 OTUs in RPS
+Rtop10 <- names(sort(taxa_sums(RPS.glom), decreasing = TRUE)[1:10])
+Rtop10
+# Prune out all taxa except those top 10
+prune.Rtop10 = prune_taxa(Rtop10, RPS.glom)
+ntaxa(prune.Rtop10) #this should return 10
+# Normalize the top 10 taxa to be out of 100
+RPS.trans = transform_sample_counts(prune.Rtop10, function(x) x/sum(x)*100)
+# Create a dataframe that has melted the normalized relative abundances of the top 10 taxa
+RPS.dataframe = psmelt(RPS.trans)
+
+RPStop10 <- ggplot(RPS.dataframe, aes(x=SampleID, y=Abundance, fill=Species))+
+  theme_classic()+
+  geom_bar(stat="identity")+
+  scale_fill_hue(l=55)+
+  xlab("SampleID")+
+  ylab("Relative Abundance %")+
+  labs(fill = "Top 10 Species")+
+  ggtitle("Relative Abundance of Oomycete Species: rps10 barcode")+
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) #+
+  #facet_wrap(~Location)
+RPStop10
+
+# Create list of top 10 OTUs in ITS
+Itop10 <- names(sort(taxa_sums(ITS.glom), decreasing = TRUE)[1:10])
+Itop10
+# Prune out all taxa except those top 10
+prune.Itop10 = prune_taxa(Itop10, ITS.glom)
+ntaxa(prune.Itop10) #this should return 10
+# Normalize the top 10 taxa to be out of 100
+ITS.trans = transform_sample_counts(prune.Itop10, function(x) x/sum(x)*100)
+# Create a dataframe that has melted the normalized relative abundances of the top 10 taxa
+ITS.dataframe = psmelt(ITS.trans)
+
+ITStop10 <- ggplot(ITS.dataframe, aes(x=SampleID, y=Abundance, fill=Species))+
+  theme_classic()+
+  geom_bar(stat="identity")+
+  scale_fill_hue(l=55)+
+  xlab("SampleID")+
+  ylab("Relative Abundance %")+
+  labs(fill = "Top 10 Species")+
+  ggtitle("Relative Abundance of Oomycete Species: ITS barcode")+
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) #+
+  #facet_wrap(~Location)
+ITStop10
+
+
+```
+
+## Heatmaps of Top 10 Abundant Taxa in eDNA Samples (no Mock Communities)
+```{r}
+COItaxa10 <- c("OTU2878", "OTU2418", "OTU2666", "OTU2962", "OTU2734", "OTU2665", "OTU2759", "OTU2151", "OTU1896", "OTU2857") #labels run from bottom up, so OTU at the top of the heatmap should be last on the list
+COItop10HeatMap <- plot_heatmap(prune.top10, sample.label = "SampleID", taxa.label = "Species", sample.order = "SampleID", taxa.order = COItaxa10, na.value = "white", high = "#274e13", low = "#efffe9", title = "COI (93% of reads)")+
+  theme(axis.text.x.bottom = element_text(angle = 45, hjust=0.5))+
+  theme(axis.text.y = element_text(size=10))
+COItop10HeatMap
+
+RPStaxa10 <- c("OTU90", "OTU418", "OTU63", "OTU136", "OTU89", "OTU12", "OTU226", "OTU52", "OTU45", "OTU44")
+RPStop10HeatMap <- plot_heatmap(prune.Rtop10, sample.label = "SampleID", taxa.label = "Species", sample.order = "SampleID", taxa.order = RPStaxa10, na.value = "white", high = "#274e13", low = "#efffe9", title = "rps10 (97% of reads)")+
+  theme(axis.text.x.bottom = element_text(angle = 45, hjust=0.5))+
+  theme(axis.text.y = element_text(size=10))
+RPStop10HeatMap
+
+ITStaxa10 <- c("OTU922", "OTU973", "OTU510", "OTU66", "OTU18", "OTU877", "OTU644", "OTU112", "OTU676", "OTU654")
+ITStop10HeatMap <- plot_heatmap(prune.Itop10, sample.label = "SampleID", taxa.label = "Species", sample.order = "SampleID", taxa.order = ITStaxa10, na.value = "white", high = "#274e13", low = "#efffe9", title = "ITS (87.6% of reads)")+
+  theme(axis.text.x.bottom = element_text(angle = 45, hjust=0.5))+
+  theme(axis.text.y = element_text(size=10))
+ITStop10HeatMap
+```
+
+## Species Abundance for Mock Communities Only
+```{r}
+COIMocks_Phyloseq <- subset_samples(COIPhyloseq_object, HempType == "Mock")
+#COIMocks_Phyloseq
+
+# Merge OTUs of the same species
+COIMocks.glom = tax_glom(COIMocks_Phyloseq, taxrank = "Species")
+# Merge by location
+COIMockslocations.glom = merge_samples(COIMocks.glom, "Location", fun=sum) 
+COIMockslocations.glom.df = psmelt(COIMockslocations.glom)
+write_excel_csv(COIMockslocations.glom.df, "COIMocks_mergedSpeciesLocations.xls")
+
+RPSMocks_Phyloseq <- subset_samples(RPSPhyloseq_object, HempType == "Mock")
+RPSMocks_Phyloseq
+RPSMocks.glom = tax_glom(RPSMocks_Phyloseq, taxrank = "Species")
+RPSMockslocations.glom = merge_samples(RPSMocks.glom, "Location", fun=sum) 
+RPSMockslocations.glom.df = psmelt(RPSMockslocations.glom)
+write_excel_csv(RPSMockslocations.glom.df, "RPSMocks_mergedSpeciesLocations.xls")
+
+ITSMocks_Phyloseq <- subset_samples(ITSPhyloseq_object, HempType == "Mock")
+ITSMocks_Phyloseq
+ITSMocks.glom = tax_glom(ITSMocks_Phyloseq, taxrank = "Species")
+ITSMockslocations.glom = merge_samples(ITSMocks.glom, "Location", fun=sum) 
+ITSMockslocations.glom.df = psmelt(ITSMockslocations.glom)
+write_excel_csv(ITSMockslocations.glom.df, "ITSMocks_mergedSpeciesLocations.xls")
+
+```
+
+
